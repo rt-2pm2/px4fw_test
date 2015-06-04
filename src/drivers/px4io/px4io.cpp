@@ -936,6 +936,7 @@ PX4IO::task_main()
 				_update_interval = 100;
 
 			orb_set_interval(_t_actuator_controls_0, _update_interval);
+			warnx("PXIO actuator controls polling interval set to %d ms\n",_update_interval);
 			/*
 			 * NOT changing the rate of groups 1-3 here, because only attitude
 			 * really needs to run fast.
@@ -963,6 +964,18 @@ PX4IO::task_main()
 			/* we're not nice to the lower-priority control groups and only check them
 			   when the primary group updated (which is now). */
 			(void)io_set_control_groups();
+			if (_vehicle_status.hil_state ==  vehicle_status_s::HIL_STATE_ON)
+			  {
+			    io_publish_pwm_outputs();
+			    
+			    pwm_counter++;
+			    if ( (now - print_last) >= 10000000 )
+			      {
+				warnx("pwm publishing freq : %lld Hz",pwm_counter/10);
+				pwm_counter = 0;
+				print_last = now;
+			      }
+			  }
 		}
 
 		if (now >= poll_last + IO_POLL_INTERVAL) {
@@ -976,7 +989,9 @@ PX4IO::task_main()
 			io_publish_raw_rc();
 
 			/* fetch PWM outputs from IO */
-			io_publish_pwm_outputs();
+			if(!(_vehicle_status.hil_state == vehicle_status_s::HIL_STATE_ON))
+			  io_publish_pwm_outputs();
+			
 		}
 
 		if (now >= orb_check_last + ORB_CHECK_INTERVAL) {
