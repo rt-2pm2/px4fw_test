@@ -39,6 +39,7 @@
  * @author Anton Babushkin <anton.babushkin@me.com>
  */
 
+#include <px4_time.h>
 #include <stdio.h>
 
 #include <commander/px4_custom_mode.h>
@@ -59,7 +60,6 @@
 #include <uORB/topics/position_setpoint_triplet.h>
 #include <uORB/topics/optical_flow.h>
 #include <uORB/topics/actuator_outputs.h>
-#include <uORB/topics/actuator_controls_effective.h>
 #include <uORB/topics/actuator_controls.h>
 #include <uORB/topics/actuator_armed.h>
 #include <uORB/topics/manual_control_setpoint.h>
@@ -68,9 +68,9 @@
 #include <uORB/topics/airspeed.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/navigation_capabilities.h>
+#include <uORB/topics/distance_sensor.h>
 #include <drivers/drv_rc_input.h>
 #include <drivers/drv_pwm_output.h>
-#include <drivers/drv_range_finder.h>
 #include <systemlib/err.h>
 #include <mavlink/mavlink_log.h>
 
@@ -273,16 +273,26 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamHeartbeat(MavlinkStreamHeartbeat &);
   MavlinkStreamHeartbeat& operator = (const MavlinkStreamHeartbeat &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamHeartbeat(Mavlink *mavlink) : MavlinkStream(mavlink),
 						      _status_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_status))),
-						      _pos_sp_triplet_sub(_mavlink->add_orb_subscription(ORB_ID(position_setpoint_triplet)))
+						      _pos_sp_triplet_sub(_mavlink->add_orb_subscription(ORB_ID(position_setpoint_triplet))),
+						      _loop_perf(perf_alloc(PC_ELAPSED, "mes_heartbeat_el")),
+						      _iter_perf(perf_alloc(PC_INTERVAL,"mes_heartbeat_int"))
+						      
   {}
+
+  ~MavlinkStreamHeartbeat() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+    
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_status_s status;
     struct position_setpoint_triplet_s pos_sp_triplet;
 
@@ -306,7 +316,9 @@ protected:
     msg.autopilot = MAV_AUTOPILOT_PX4;
     msg.mavlink_version = 3;
 
+    perf_count(_iter_perf);
     _mavlink->send_message(MAVLINK_MSG_ID_HEARTBEAT, &msg);
+    perf_end(_loop_perf);
   }
 };
 
@@ -344,20 +356,27 @@ private:
   FILE *fp = nullptr;
   unsigned write_err_count = 0;
   static const unsigned write_err_threshold = 5;
-  
-  
+  perf_counter_t _loop_perf, _iter_perf;
+
 protected:
-  explicit MavlinkStreamStatustext(Mavlink *mavlink) : MavlinkStream(mavlink)
+  explicit MavlinkStreamStatustext(Mavlink *mavlink) : MavlinkStream(mavlink),
+						       _loop_perf(perf_alloc(PC_ELAPSED, "mes_statustext_el")),
+						       _iter_perf(perf_alloc(PC_INTERVAL, "mes_statustext_int"))
+						       
   {}
 
   ~MavlinkStreamStatustext() {
     if (fp) {
       fclose(fp);
     }
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
   }
 
+#ifndef __PX4_QURT
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     if (!mavlink_logbuffer_is_empty(_mavlink->get_logbuffer())) {
       struct mavlink_logmessage logmsg;
       int lb_ret = mavlink_logbuffer_read(_mavlink->get_logbuffer(), &logmsg);
@@ -367,7 +386,8 @@ protected:
 
 	msg.severity = logmsg.severity;
 	strncpy(msg.text, logmsg.text, sizeof(msg.text));
-
+	
+	perf_count(_iter_perf);
 	_mavlink->send_message(MAVLINK_MSG_ID_STATUSTEXT, &msg);
 
 	/* write log messages in first instance to disk */
@@ -393,7 +413,7 @@ protected:
 	    char log_file_path[64] = "";
 
 	    timespec ts;
-	    clock_gettime(CLOCK_REALTIME, &ts);
+	    px4_clock_gettime(CLOCK_REALTIME, &ts);
 	    /* use GPS time for log file naming, e.g. /fs/microsd/2014-01-19/19_37_52.bin */
 	    time_t gps_time_sec = ts.tv_sec + (ts.tv_nsec / 1e9);
 	    struct tm tt;
@@ -411,7 +431,9 @@ protected:
 	}
       }
     }
+    perf_end(_loop_perf);
   }
+#endif
 };
 
 class MavlinkStreamCommandLong : public MavlinkStream
@@ -448,18 +470,26 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamCommandLong(MavlinkStreamCommandLong &);
   MavlinkStreamCommandLong& operator = (const MavlinkStreamCommandLong &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamCommandLong(Mavlink *mavlink) : MavlinkStream(mavlink),
 							_cmd_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_command))),
-							_cmd_time(0)
+							_cmd_time(0),
+							_loop_perf(perf_alloc(PC_ELAPSED, "mes_streamCommandLong_el")),
+							_iter_perf(perf_alloc(PC_INTERVAL, "mes_streamCommandLong_int"))
+							      
   {}
 
+  ~MavlinkStreamCommandLong(){
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_command_s cmd;
-
     if (_cmd_sub->update(&_cmd_time, &cmd)) {
       /* only send commands for other systems/components */
       if (cmd.target_system != mavlink_system.sysid || cmd.target_component != mavlink_system.compid) {
@@ -477,9 +507,11 @@ protected:
 	msg.param6 = cmd.param6;
 	msg.param7 = cmd.param7;
 
+	perf_count(_iter_perf);
 	_mavlink->send_message(MAVLINK_MSG_ID_COMMAND_LONG, &msg);
       }
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -517,15 +549,25 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamSysStatus(MavlinkStreamSysStatus &);
   MavlinkStreamSysStatus& operator = (const MavlinkStreamSysStatus &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamSysStatus(Mavlink *mavlink) : MavlinkStream(mavlink),
-						      _status_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_status)))
+						      _status_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_status))),
+						      _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamSytemStatus_el")),
+						      _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamSystemStatus_int"))
+						      
   {}
 
+  ~MavlinkStreamSysStatus() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
+    perf_count(_iter_perf);
     struct vehicle_status_s status;
 
     if (_status_sub->update(&status)) {
@@ -545,9 +587,32 @@ protected:
       msg.errors_count4 = status.errors_count4;
       msg.battery_remaining = (msg.voltage_battery > 0) ?
 	status.battery_remaining * 100.0f : -1;
-
+      
       _mavlink->send_message(MAVLINK_MSG_ID_SYS_STATUS, &msg);
+
+      /* battery status message with higher resolution */
+      mavlink_battery_status_t bat_msg;
+      bat_msg.id = 0;
+      bat_msg.battery_function = MAV_BATTERY_FUNCTION_ALL;
+      bat_msg.type = MAV_BATTERY_TYPE_LIPO;
+      bat_msg.temperature = INT16_MAX;
+      for (unsigned i = 0; i < (sizeof(bat_msg.voltages) / sizeof(bat_msg.voltages[0])); i++) {
+	if (i < status.battery_cell_count) {
+	  bat_msg.voltages[i] = (status.battery_voltage / status.battery_cell_count) * 1000.0f;
+	} else {
+	  bat_msg.voltages[i] = 0;
+	}
+      }
+      bat_msg.current_battery = status.battery_current * 100.0f;
+      bat_msg.current_consumed = status.battery_discharged_mah;
+      bat_msg.energy_consumed = -1.0f;
+      bat_msg.battery_remaining = (status.battery_voltage > 0) ?
+	status.battery_remaining * 100.0f : -1;
+
+      
+      _mavlink->send_message(MAVLINK_MSG_ID_BATTERY_STATUS, &bat_msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -592,7 +657,7 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamHighresIMU(MavlinkStreamHighresIMU &);
   MavlinkStreamHighresIMU& operator = (const MavlinkStreamHighresIMU &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamHighresIMU(Mavlink *mavlink) : MavlinkStream(mavlink),
@@ -601,11 +666,20 @@ protected:
 						       _accel_timestamp(0),
 						       _gyro_timestamp(0),
 						       _mag_timestamp(0),
-						       _baro_timestamp(0)
+						       _baro_timestamp(0),
+						       _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamHiResImu_el")),
+						       _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamHiResImu_int"))
   {}
 
+  ~MavlinkStreamHighresIMU(){
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+    
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct sensor_combined_s sensor;
 
     if (_sensor_sub->update(&_sensor_time, &sensor)) {
@@ -653,8 +727,11 @@ protected:
       msg.temperature = sensor.baro_temp_celcius;
       msg.fields_updated = fields_updated;
 
+
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_HIGHRES_IMU, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -694,16 +771,25 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamAttitude(MavlinkStreamAttitude &);
   MavlinkStreamAttitude& operator = (const MavlinkStreamAttitude &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
+
 protected:
   explicit MavlinkStreamAttitude(Mavlink *mavlink) : MavlinkStream(mavlink),
 						     _att_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_attitude))),
-						     _att_time(0)
+						     _att_time(0),
+						     _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamAttitude_el")),
+						     _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamAttitude_int"))
   {}
 
+  ~MavlinkStreamAttitude() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_attitude_s att;
 
     if (_att_sub->update(&_att_time, &att)) {
@@ -717,8 +803,10 @@ protected:
       msg.pitchspeed = att.pitchspeed;
       msg.yawspeed = att.yawspeed;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_ATTITUDE, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -758,16 +846,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamAttitudeQuaternion(MavlinkStreamAttitudeQuaternion &);
   MavlinkStreamAttitudeQuaternion& operator = (const MavlinkStreamAttitudeQuaternion &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamAttitudeQuaternion(Mavlink *mavlink) : MavlinkStream(mavlink),
 							       _att_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_attitude))),
-							       _att_time(0)
+							       _att_time(0),
+							       _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamAttitudeQuat_el")),
+							       _iter_perf(perf_alloc(PC_INTERVAL, "mes_steamAttitudeQuat_int"))
   {}
 
+  ~MavlinkStreamAttitudeQuaternion() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_attitude_s att;
 
     if (_att_sub->update(&_att_time, &att)) {
@@ -782,8 +878,10 @@ protected:
       msg.pitchspeed = att.pitchspeed;
       msg.yawspeed = att.yawspeed;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_ATTITUDE_QUATERNION, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -836,8 +934,8 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamVFRHUD(MavlinkStreamVFRHUD &);
   MavlinkStreamVFRHUD& operator = (const MavlinkStreamVFRHUD &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
   explicit MavlinkStreamVFRHUD(Mavlink *mavlink) : MavlinkStream(mavlink),
 						   _att_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_attitude))),
@@ -849,11 +947,19 @@ protected:
 						   _act_sub(_mavlink->add_orb_subscription(ORB_ID(actuator_controls_0))),
 						   _act_time(0),
 						   _airspeed_sub(_mavlink->add_orb_subscription(ORB_ID(airspeed))),
-						   _airspeed_time(0)
+						   _airspeed_time(0),
+						   _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamVfrHud_el")),
+						   _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamVfrHud_int"))
   {}
+
+  ~MavlinkStreamVFRHUD() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_attitude_s att;
     struct vehicle_global_position_s pos;
     struct actuator_armed_s armed;
@@ -876,8 +982,10 @@ protected:
       msg.alt = pos.alt;
       msg.climb = -pos.vel_d;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_VFR_HUD, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -917,16 +1025,25 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamGPSRawInt(MavlinkStreamGPSRawInt &);
   MavlinkStreamGPSRawInt& operator = (const MavlinkStreamGPSRawInt &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
   explicit MavlinkStreamGPSRawInt(Mavlink *mavlink) : MavlinkStream(mavlink),
 						      _gps_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_gps_position))),
-						      _gps_time(0)
+						      _gps_time(0),
+						      _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamGpsRaw_el")),
+						      _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamGpsRaw_int"))
+						      
   {}
+
+  ~MavlinkStreamGPSRawInt() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_gps_position_s gps;
 
     if (_gps_sub->update(&_gps_time, &gps)) {
@@ -943,8 +1060,10 @@ protected:
 	msg.cog = _wrap_2pi(gps.cog_rad) * M_RAD_TO_DEG_F * 1e2f,
 	msg.satellites_visible = gps.satellites_used;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_GPS_RAW_INT, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -975,22 +1094,32 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamSystemTime(MavlinkStreamSystemTime &);
   MavlinkStreamSystemTime &operator = (const MavlinkStreamSystemTime &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
-  explicit MavlinkStreamSystemTime(Mavlink *mavlink) : MavlinkStream(mavlink)
+  explicit MavlinkStreamSystemTime(Mavlink *mavlink) : MavlinkStream(mavlink),
+						       _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamSysTime_el")),
+						       _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamSysTime_int"))
   {}
 
+  ~MavlinkStreamSystemTime() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t) {
+    perf_begin(_loop_perf);
     mavlink_system_time_t msg;
     timespec tv;
 
-    clock_gettime(CLOCK_REALTIME, &tv);
+    px4_clock_gettime(CLOCK_REALTIME, &tv);
 
     msg.time_boot_ms = hrt_absolute_time() / 1000;
     msg.time_unix_usec = (uint64_t)tv.tv_sec * 1000000 + tv.tv_nsec / 1000;
 
+    perf_count(_iter_perf);
     _mavlink->send_message(MAVLINK_MSG_ID_SYSTEM_TIME, &msg);
+    perf_end(_loop_perf);
   }
 };
 
@@ -1021,19 +1150,29 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamTimesync(MavlinkStreamTimesync &);
   MavlinkStreamTimesync &operator = (const MavlinkStreamTimesync &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
-  explicit MavlinkStreamTimesync(Mavlink *mavlink) : MavlinkStream(mavlink)
+  explicit MavlinkStreamTimesync(Mavlink *mavlink) : MavlinkStream(mavlink),
+						     _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamTimeSync_el")),
+						     _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamTimeSync_int"))
   {}
 
+  ~MavlinkStreamTimesync() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t) {
+    perf_begin(_loop_perf);
     mavlink_timesync_t msg;
 
     msg.tc1 = 0;
     msg.ts1 = hrt_absolute_time() * 1000; // boot time in nanoseconds
 
+    perf_count(_iter_perf);
     _mavlink->send_message(MAVLINK_MSG_ID_TIMESYNC, &msg);
+    perf_end(_loop_perf);
   }
 };
 
@@ -1075,18 +1214,26 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamGlobalPositionInt(MavlinkStreamGlobalPositionInt &);
   MavlinkStreamGlobalPositionInt& operator = (const MavlinkStreamGlobalPositionInt &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamGlobalPositionInt(Mavlink *mavlink) : MavlinkStream(mavlink),
 							      _pos_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_global_position))),
 							      _pos_time(0),
 							      _home_sub(_mavlink->add_orb_subscription(ORB_ID(home_position))),
-							      _home_time(0)
+							      _home_time(0),
+							      _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamGlobalPositionInt_el")),
+							      _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamGlobalPositionInt_int"))
   {}
 
+  ~MavlinkStreamGlobalPositionInt() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_global_position_s pos;
     struct home_position_s home;
 
@@ -1106,6 +1253,7 @@ protected:
       msg.vz = pos.vel_d * 100.0f;
       msg.hdg = _wrap_2pi(pos.yaw) * M_RAD_TO_DEG_F * 100.0f;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_GLOBAL_POSITION_INT, &msg);
     }
   }
@@ -1147,18 +1295,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamLocalPositionNED(MavlinkStreamLocalPositionNED &);
   MavlinkStreamLocalPositionNED& operator = (const MavlinkStreamLocalPositionNED &);
-
-  perf_coutner_t _iter_locposned_pc;
-  
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamLocalPositionNED(Mavlink *mavlink) : MavlinkStream(mavlink),
 							     _pos_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_local_position))),
-							     _pos_time(0)
+							     _pos_time(0),
+							     _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamLocalPositionNed_el")),
+							     _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamLocalPositionNed_int"))
   {}
 
+  ~MavlinkStreamLocalPositionNED() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_local_position_s pos;
 
     if (_pos_sub->update(&_pos_time, &pos)) {
@@ -1172,6 +1326,7 @@ protected:
       msg.vy = pos.vy;
       msg.vz = pos.vz;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_LOCAL_POSITION_NED, &msg);
     }
   }
@@ -1213,16 +1368,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamViconPositionEstimate(MavlinkStreamViconPositionEstimate &);
   MavlinkStreamViconPositionEstimate& operator = (const MavlinkStreamViconPositionEstimate &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamViconPositionEstimate(Mavlink *mavlink) : MavlinkStream(mavlink),
 								  _pos_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_vicon_position))),
-								  _pos_time(0)
+								  _pos_time(0),
+								  _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamViconPositionEstimate_el")),
+								  _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamViconPositionEstimate_int"))
   {}
 
+  ~MavlinkStreamViconPositionEstimate() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_vicon_position_s pos;
 
     if (_pos_sub->update(&_pos_time, &pos)) {
@@ -1236,6 +1399,7 @@ protected:
       msg.pitch = pos.pitch;
       msg.yaw = pos.yaw;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_VICON_POSITION_ESTIMATE, &msg);
     }
   }
@@ -1276,15 +1440,23 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamGPSGlobalOrigin(MavlinkStreamGPSGlobalOrigin &);
   MavlinkStreamGPSGlobalOrigin& operator = (const MavlinkStreamGPSGlobalOrigin &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamGPSGlobalOrigin(Mavlink *mavlink) : MavlinkStream(mavlink),
-							    _home_sub(_mavlink->add_orb_subscription(ORB_ID(home_position)))
+							    _home_sub(_mavlink->add_orb_subscription(ORB_ID(home_position))),
+							    _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamGpsGlobalOrigin_el")),
+							    _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamGpsGlobalOrigin_int"))
   {}
+
+  ~MavlinkStreamGPSGlobalOrigin() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     /* we're sending the GPS home periodically to ensure the
      * the GCS does pick it up at one point */
     if (_home_sub->is_published()) {
@@ -1297,6 +1469,7 @@ protected:
 	msg.longitude = home.lon * 1e7;
 	msg.altitude = home.alt * 1e3f;
 
+	perf_count(_iter_perf);
 	_mavlink->send_message(MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN, &msg);
       }
     }
@@ -1352,18 +1525,26 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamServoOutputRaw(MavlinkStreamServoOutputRaw &);
   MavlinkStreamServoOutputRaw& operator = (const MavlinkStreamServoOutputRaw &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
   explicit MavlinkStreamServoOutputRaw(Mavlink *mavlink) : MavlinkStream(mavlink),
 							   _act_sub(nullptr),
-							   _act_time(0)
+							   _act_time(0),
+							   _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamServoOuput_el")),
+							   _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamServoOutput_int"))
   {
     _act_sub = _mavlink->add_orb_subscription(ORB_ID(actuator_outputs), N);
   }
 
+  ~MavlinkStreamServoOutputRaw() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+    
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct actuator_outputs_s act;
 
     if (_act_sub->update(&_act_time, &act)) {
@@ -1380,6 +1561,7 @@ protected:
       msg.servo7_raw = act.output[6];
       msg.servo8_raw = act.output[7];
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_SERVO_OUTPUT_RAW, &msg);
     }
   }
@@ -1433,12 +1615,14 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamActuatorControlTarget(MavlinkStreamActuatorControlTarget &);
   MavlinkStreamActuatorControlTarget& operator = (const MavlinkStreamActuatorControlTarget &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamActuatorControlTarget(Mavlink *mavlink) : MavlinkStream(mavlink),
 								  _att_ctrl_sub(nullptr),
-								  _att_ctrl_time(0)
+								  _att_ctrl_time(0),
+								  _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamActuatorControlTarget_el")),
+								  _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamActuatorControlTarget_int"))
   {
     // XXX this can be removed once the multiplatform system remaps topics
     switch (N) {
@@ -1459,9 +1643,14 @@ protected:
       break;
     }
   }
+  ~MavlinkStreamActuatorControlTarget() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct actuator_controls_s att_ctrl;
 
     if (_att_ctrl_sub->update(&_att_ctrl_time, &att_ctrl)) {
@@ -1474,6 +1663,7 @@ protected:
 	msg.controls[i] = att_ctrl.control[i];
       }
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_ACTUATOR_CONTROL_TARGET, &msg);
     }
   }
@@ -1518,17 +1708,10 @@ private:
   MavlinkOrbSubscription *_act_sub;
   uint64_t _act_time;
 
-  uint32_t _counter;
-
-  uint64_t _time_send;
-  uint64_t _old_sent;
-  //uint64_t _dt_buff[512];
-  double delta_t;
-
   /* do not allow top copying this class */
   MavlinkStreamHILControls(MavlinkStreamHILControls &);
   MavlinkStreamHILControls& operator = (const MavlinkStreamHILControls &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamHILControls(Mavlink *mavlink) : MavlinkStream(mavlink),
@@ -1538,14 +1721,18 @@ protected:
 							_pos_sp_triplet_time(0),
 							_act_sub(_mavlink->add_orb_subscription(ORB_ID(actuator_outputs))),
 							_act_time(0),
-							_counter(0),
-							_time_send(0),
-							_old_sent(0),
-							delta_t(0)
+							_loop_perf(perf_alloc(PC_ELAPSED, "mes_streamHilControls_el")),
+							_iter_perf(perf_alloc(PC_INTERVAL, "mes_streamHilControls_int"))
   {}
 
+  ~MavlinkStreamHILControls() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_status_s status;
     struct position_setpoint_triplet_s pos_sp_triplet;
     struct actuator_outputs_s act;
@@ -1553,7 +1740,6 @@ protected:
     bool updated = _act_sub->update(&_act_time, &act);
     updated |= _pos_sp_triplet_sub->update(&_pos_sp_triplet_time, &pos_sp_triplet);
     updated |= _status_sub->update(&_status_time, &status);
-
 
     if (updated && (status.arming_state == vehicle_status_s::ARMING_STATE_ARMED)) {
       /* translate the current syste state to mavlink state and mode */
@@ -1653,20 +1839,8 @@ protected:
       msg.mode = mavlink_base_mode;
       msg.nav_mode = 0;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_HIL_CONTROLS, &msg);
-      
-      _time_send = msg.time_usec;
-      
-      if ( (_time_send - _old_sent) > 10000000 )
-	{
-	  delta_t = _time_send - _old_sent;
-	  warnx("HIL_CONTROLS : %d Hz",_counter/10);
-	  //printf("%0.1f | %0.1f | %0.1f | %0.1f \n", (double)act.output[0], (double)act.output[1], (double)act.output[2], (double)act.output[3]);
-	  _counter = 0;
-	  _old_sent = _time_send;
-	}
-      _counter++;
-      
     }
   }
 };
@@ -1706,15 +1880,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamPositionTargetGlobalInt(MavlinkStreamPositionTargetGlobalInt &);
   MavlinkStreamPositionTargetGlobalInt& operator = (const MavlinkStreamPositionTargetGlobalInt &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamPositionTargetGlobalInt(Mavlink *mavlink) : MavlinkStream(mavlink),
-								    _pos_sp_triplet_sub(_mavlink->add_orb_subscription(ORB_ID(position_setpoint_triplet)))
+								    _pos_sp_triplet_sub(_mavlink->add_orb_subscription(ORB_ID(position_setpoint_triplet))),
+								    _loop_perf(perf_alloc(PC_ELAPSED, "mes_stream_PositionTargetGlobalInt_el")),
+								    _iter_perf(perf_alloc(PC_INTERVAL, "mes_stream_PositionTargetGloablInt_int"))
   {}
 
+  ~MavlinkStreamPositionTargetGlobalInt() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+    
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct position_setpoint_triplet_s pos_sp_triplet;
 
     if (_pos_sp_triplet_sub->update(&pos_sp_triplet)) {
@@ -1726,6 +1909,7 @@ protected:
       msg.lon_int = pos_sp_triplet.current.lon * 1e7;
       msg.alt = pos_sp_triplet.current.alt;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT, &msg);
     }
   }
@@ -1767,16 +1951,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamLocalPositionSetpoint(MavlinkStreamLocalPositionSetpoint &);
   MavlinkStreamLocalPositionSetpoint& operator = (const MavlinkStreamLocalPositionSetpoint &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamLocalPositionSetpoint(Mavlink *mavlink) : MavlinkStream(mavlink),
 								  _pos_sp_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_local_position_setpoint))),
-								  _pos_sp_time(0)
+								  _pos_sp_time(0),
+								  _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamLocalPositionSetpoint_el")),
+								  _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamLocalPositionSetpoint_int"))
   {}
+
+  ~MavlinkStreamLocalPositionSetpoint() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_local_position_setpoint_s pos_sp;
 
     if (_pos_sp_sub->update(&_pos_sp_time, &pos_sp)) {
@@ -1788,6 +1980,7 @@ protected:
       msg.y = pos_sp.y;
       msg.z = pos_sp.z;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_POSITION_TARGET_LOCAL_NED, &msg);
     }
   }
@@ -1831,18 +2024,26 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamAttitudeTarget(MavlinkStreamAttitudeTarget &);
   MavlinkStreamAttitudeTarget& operator = (const MavlinkStreamAttitudeTarget &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamAttitudeTarget(Mavlink *mavlink) : MavlinkStream(mavlink),
 							   _att_sp_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_attitude_setpoint))),
 							   _att_rates_sp_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_rates_setpoint))),
 							   _att_sp_time(0),
-							   _att_rates_sp_time(0)
+							   _att_rates_sp_time(0),
+							   _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamAttitudeTarget_el")),
+							   _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamAttitudeTarget_int"))
   {}
 
+  ~MavlinkStreamAttitudeTarget() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_attitude_setpoint_s att_sp;
 
     if (_att_sp_sub->update(&_att_sp_time, &att_sp)) {
@@ -1861,6 +2062,7 @@ protected:
 
       msg.thrust = att_sp.thrust;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_ATTITUDE_TARGET, &msg);
     }
   }
@@ -1903,16 +2105,25 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamRCChannelsRaw(MavlinkStreamRCChannelsRaw &);
   MavlinkStreamRCChannelsRaw& operator = (const MavlinkStreamRCChannelsRaw &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
   explicit MavlinkStreamRCChannelsRaw(Mavlink *mavlink) : MavlinkStream(mavlink),
 							  _rc_sub(_mavlink->add_orb_subscription(ORB_ID(input_rc))),
-							  _rc_time(0)
+							  _rc_time(0),
+							  _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamRCChannelsRaw_el")),
+							  _iter_perf(perf_alloc(PC_INTERVAL, "mes_stramRCChannelsRaw_int"))
+
   {}
+
+  ~MavlinkStreamRCChannelsRaw() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct rc_input_values rc;
 
     if (_rc_sub->update(&_rc_time, &rc)) {
@@ -1943,6 +2154,7 @@ protected:
 
       msg.rssi = rc.rssi;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_RC_CHANNELS, &msg);
     }
   }
@@ -1984,16 +2196,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamManualControl(MavlinkStreamManualControl &);
   MavlinkStreamManualControl& operator = (const MavlinkStreamManualControl &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamManualControl(Mavlink *mavlink) : MavlinkStream(mavlink),
 							  _manual_sub(_mavlink->add_orb_subscription(ORB_ID(manual_control_setpoint))),
-							  _manual_time(0)
+							  _manual_time(0),
+							  _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamManualControl_el")),
+							  _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamManualControl_int"))
   {}
+
+  ~MavlinkStreamManualControl() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
 
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct manual_control_setpoint_s manual;
 
     if (_manual_sub->update(&_manual_time, &manual)) {
@@ -2006,6 +2226,7 @@ protected:
       msg.r = manual.r * 1000;
       msg.buttons = 0;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_MANUAL_CONTROL, &msg);
     }
   }
@@ -2046,16 +2267,25 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamOpticalFlowRad(MavlinkStreamOpticalFlowRad &);
   MavlinkStreamOpticalFlowRad& operator = (const MavlinkStreamOpticalFlowRad &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamOpticalFlowRad(Mavlink *mavlink) : MavlinkStream(mavlink),
 							   _flow_sub(_mavlink->add_orb_subscription(ORB_ID(optical_flow))),
-							   _flow_time(0)
+							   _flow_time(0),
+							   _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamOpticalFlowRad_el")),
+							   _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamOpticalFlowRad_int"))
   {}
 
+  ~MavlinkStreamOpticalFlowRad() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+    
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct optical_flow_s flow;
 
     if (_flow_sub->update(&_flow_time, &flow)) {
@@ -2075,6 +2305,7 @@ protected:
       msg.time_delta_distance_us = flow.time_since_last_sonar_update;
       msg.temperature = flow.gyro_temperature;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_OPTICAL_FLOW_RAD, &msg);
     }
   }
@@ -2115,16 +2346,24 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamNamedValueFloat(MavlinkStreamNamedValueFloat &);
   MavlinkStreamNamedValueFloat& operator = (const MavlinkStreamNamedValueFloat &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamNamedValueFloat(Mavlink *mavlink) : MavlinkStream(mavlink),
 							    _debug_sub(_mavlink->add_orb_subscription(ORB_ID(debug_key_value))),
-							    _debug_time(0)
+							    _debug_time(0),
+							    _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamNamedValueFloat_el")),
+							    _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamNamedValueFloat_int"))
   {}
 
+  ~MavlinkStreamNamedValueFloat() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct debug_key_value_s debug;
 
     if (_debug_sub->update(&_debug_time, &debug)) {
@@ -2136,6 +2375,7 @@ protected:
       msg.name[sizeof(msg.name) - 1] = '\0';
       msg.value = debug.value;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_NAMED_VALUE_FLOAT, &msg);
     }
   }
@@ -2176,15 +2416,23 @@ private:
   /* do not allow top copying this class */
   MavlinkStreamCameraCapture(MavlinkStreamCameraCapture &);
   MavlinkStreamCameraCapture& operator = (const MavlinkStreamCameraCapture &);
+  perf_counter_t _loop_perf, _iter_perf;
 
-  
 protected:
   explicit MavlinkStreamCameraCapture(Mavlink *mavlink) : MavlinkStream(mavlink),
 							  _status_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_status))),
+							  _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamCameraCapture_el")),
+							  _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamCameraCapture_int"))
   {}
 
+  ~MavlinkStreamCameraCapture() {
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
+    perf_begin(_loop_perf);
     struct vehicle_status_s status;
     (void)_status_sub->update(&status);
 
@@ -2203,10 +2451,10 @@ protected:
     msg.param6 = 0;
     msg.param7 = 0;
 
+    perf_count(_iter_perf);
     _mavlink->send_message(MAVLINK_MSG_ID_COMMAND_LONG, &msg);
   }
 };
-
 
 class MavlinkStreamDistanceSensor : public MavlinkStream
 {
@@ -2233,37 +2481,56 @@ public:
 
   unsigned get_size()
   {
-    return _range_sub->is_published() ? (MAVLINK_MSG_ID_DISTANCE_SENSOR_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES) : 0;
+    return _distance_sensor_sub->is_published() ? (MAVLINK_MSG_ID_DISTANCE_SENSOR_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES) : 0;
   }
 
 private:
-  MavlinkOrbSubscription *_range_sub;
-  uint64_t _range_time;
+  MavlinkOrbSubscription *_distance_sensor_sub;
+  uint64_t _dist_sensor_time;
 
   /* do not allow top copying this class */
   MavlinkStreamDistanceSensor(MavlinkStreamDistanceSensor &);
   MavlinkStreamDistanceSensor& operator = (const MavlinkStreamDistanceSensor &);
-
+  perf_counter_t _loop_perf, _iter_perf;
 
 protected:
   explicit MavlinkStreamDistanceSensor(Mavlink *mavlink) : MavlinkStream(mavlink),
-							   _range_sub(_mavlink->add_orb_subscription(ORB_ID(sensor_range_finder))),
-							   _range_time(0)
+							   _distance_sensor_sub(_mavlink->add_orb_subscription(ORB_ID(distance_sensor))),
+							   _dist_sensor_time(0),
+							   _loop_perf(perf_alloc(PC_ELAPSED, "mes_streamDistanceSensor_el")),
+							   _iter_perf(perf_alloc(PC_INTERVAL, "mes_streamDistanceSensor_int"))
   {}
 
+  ~MavlinkStreamDistanceSensor(){
+    perf_free(_loop_perf);
+    perf_free(_iter_perf);
+  }
+  
   void send(const hrt_abstime t)
   {
-    struct range_finder_report range;
+    perf_begin(_loop_perf);
+    struct distance_sensor_s dist_sensor;
 
-    if (_range_sub->update(&_range_time, &range)) {
+    if (_distance_sensor_sub->update(&_dist_sensor_time, &dist_sensor)) {
 
       mavlink_distance_sensor_t msg;
 
-      msg.time_boot_ms = range.timestamp / 1000;
+      msg.time_boot_ms = dist_sensor.timestamp / 1000; /* us to ms */
 
-      switch (range.type) {
-      case RANGE_FINDER_TYPE_LASER:
+      /* TODO: use correct ID here */
+      msg.id = 0;
+
+      switch (dist_sensor.type) {
+      case MAV_DISTANCE_SENSOR_ULTRASOUND:
+	msg.type = MAV_DISTANCE_SENSOR_ULTRASOUND;
+	break;
+
+      case MAV_DISTANCE_SENSOR_LASER:
 	msg.type = MAV_DISTANCE_SENSOR_LASER;
+	break;
+
+      case MAV_DISTANCE_SENSOR_INFRARED:
+	msg.type = MAV_DISTANCE_SENSOR_INFRARED;
 	break;
 
       default:
@@ -2271,13 +2538,13 @@ protected:
 	break;
       }
 
-      msg.id = 0;
-      msg.orientation = 0;
-      msg.min_distance = range.minimum_distance * 100;
-      msg.max_distance = range.maximum_distance * 100;
-      msg.current_distance = range.distance * 100;
-      msg.covariance = 20;
+      msg.orientation = dist_sensor.orientation;
+      msg.min_distance = dist_sensor.min_distance * 100.0f; /* m to cm */
+      msg.max_distance = dist_sensor.max_distance * 100.0f; /* m to cm */
+      msg.current_distance = dist_sensor.current_distance * 100.0f; /* m to cm */
+      msg.covariance = dist_sensor.covariance;
 
+      perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_DISTANCE_SENSOR, &msg);
     }
   }

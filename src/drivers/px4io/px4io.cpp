@@ -295,6 +295,8 @@ private:
 	actuator_outputs_s	_outputs;		///< mixed outputs
 	servorail_status_s	_servorail_status;	///< servorail status
 
+  vehicle_status_s        _vehicle_status;               
+
 	bool			_primary_pwm_device;	///< true if we are the default PWM output
 	bool			_lockdown_override;	///< allow to override the safety lockdown
 
@@ -525,6 +527,7 @@ PX4IO::PX4IO(device::Device *interface) :
 	_to_mixer_status(nullptr),
 	_outputs{},
 	_servorail_status{},
+	_vehicle_status{},
 	_primary_pwm_device(false),
 	_lockdown_override(false),
 	_battery_amp_per_volt(90.0f / 5.0f), // this matches the 3DR current sensor
@@ -881,7 +884,10 @@ void
 PX4IO::task_main()
 {
 	hrt_abstime poll_last = 0;
+	hrt_abstime print_last = 0;
 	hrt_abstime orb_check_last = 0;
+
+	uint64_t pwm_counter = 0;
 
 	_mavlink_fd = ::open(MAVLINK_LOG_DEVICE, 0);
 
