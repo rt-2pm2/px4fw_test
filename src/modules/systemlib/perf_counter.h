@@ -41,6 +41,7 @@
 
 #include <stdint.h>
 #include <px4_defines.h>
+#include <stdio.h>
 
 /**
  * Counter types.
@@ -164,6 +165,20 @@ __EXPORT extern void		perf_print_counter_fd(int fd, perf_counter_t handle);
  * @param fd			File descriptor to print to - e.g. 0 for stdout
  */
 __EXPORT extern void		perf_print_all(int fd);
+
+/**
+ * Print all of the performance counters.
+ *
+ * @param fd			File descriptor to print to - e.g. 0 for stdout
+ */
+__EXPORT extern void		perf_print_streams(int fd);
+
+/**
+ * Print all of the performance counters.
+ *
+ * @param fd			File pointer to print to - e.g. 0 for stdout
+ */
+__EXPORT extern void            perf_print_streams_sd(FILE* fd);
 
 /**
  * Print hrt latency counters.

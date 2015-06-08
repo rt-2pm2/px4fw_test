@@ -1256,6 +1256,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_GLOBAL_POSITION_INT, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1329,6 +1330,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_LOCAL_POSITION_NED, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1402,6 +1404,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_VICON_POSITION_ESTIMATE, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1473,6 +1476,7 @@ protected:
 	_mavlink->send_message(MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN, &msg);
       }
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1564,6 +1568,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_SERVO_OUTPUT_RAW, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1666,6 +1671,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_ACTUATOR_CONTROL_TARGET, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1842,6 +1848,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_HIL_CONTROLS, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1912,6 +1919,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -1983,6 +1991,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_POSITION_TARGET_LOCAL_NED, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -2065,6 +2074,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_ATTITUDE_TARGET, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -2157,6 +2167,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_RC_CHANNELS, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -2229,6 +2240,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_MANUAL_CONTROL, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -2308,6 +2320,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_OPTICAL_FLOW_RAD, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -2378,6 +2391,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_NAMED_VALUE_FLOAT, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 
@@ -2453,6 +2467,7 @@ protected:
 
     perf_count(_iter_perf);
     _mavlink->send_message(MAVLINK_MSG_ID_COMMAND_LONG, &msg);
+    perf_end(_loop_perf);
   }
 };
 
@@ -2547,6 +2562,7 @@ protected:
       perf_count(_iter_perf);
       _mavlink->send_message(MAVLINK_MSG_ID_DISTANCE_SENSOR, &msg);
     }
+    perf_end(_loop_perf);
   }
 };
 

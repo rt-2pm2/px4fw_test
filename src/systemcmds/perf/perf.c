@@ -64,24 +64,41 @@ __EXPORT int perf_main(int argc, char *argv[]);
 
 int perf_main(int argc, char *argv[])
 {
-	if (argc > 1) {
-		if (strcmp(argv[1], "reset") == 0) {
-			perf_reset_all();
-			return 0;
+  if (argc > 1) {
+    if (strcmp(argv[1], "reset") == 0) {
+      perf_reset_all();
+      return 0;
 
-		} else if (strcmp(argv[1], "latency") == 0) {
-			perf_print_latency(0 /* stdout */);
-			fflush(stdout);
-			return 0;
-		}
-
-		printf("Usage: perf [reset | latency]\n");
-		return -1;
+    } else if (strcmp(argv[1], "latency") == 0) {
+      perf_print_latency(0 /* stdout */);
+      fflush(stdout);
+      return 0;
+			
+    } else if (strcmp(argv[1], "streams") == 0) {
+      perf_print_streams(0);
+      fflush(stdout);
+      return 0;
+    } else if (strcmp(argv[1], "streams_sd") == 0) {
+      FILE *sd_file = fopen("/fs/microsd/streams_perf.txt","a");
+      if (sd_file)
+	{
+	  perf_print_streams_sd(sd_file);
+	  fsync(fileno(sd_file));
+	  fclose(sd_file);
+	  return 0;
 	}
-
-	perf_print_all(0 /* stdout */);
-	fflush(stdout);
-	return 0;
+      else
+	return -1;
+    }
+    
+    printf("Usage: perf [reset | latency]\n");
+    return -1;
+  }  
+  
+  perf_print_all(0 /* stdout */);
+  fflush(stdout);
+  return 0;
+  
 }
 
 
