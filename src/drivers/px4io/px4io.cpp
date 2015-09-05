@@ -295,6 +295,8 @@ private:
 	actuator_outputs_s	_outputs;		///< mixed outputs
 	servorail_status_s	_servorail_status;	///< servorail status
 
+  vehicle_status_s        _vehicle_status;               
+
 	bool			_primary_pwm_device;	///< true if we are the default PWM output
 	bool			_lockdown_override;	///< allow to override the safety lockdown
 
@@ -525,6 +527,7 @@ PX4IO::PX4IO(device::Device *interface) :
 	_to_mixer_status(nullptr),
 	_outputs{},
 	_servorail_status{},
+	_vehicle_status{},
 	_primary_pwm_device(false),
 	_lockdown_override(false),
 	_battery_amp_per_volt(90.0f / 5.0f), // this matches the 3DR current sensor
@@ -881,7 +884,10 @@ void
 PX4IO::task_main()
 {
 	hrt_abstime poll_last = 0;
+	hrt_abstime print_last = 0;
 	hrt_abstime orb_check_last = 0;
+
+	uint64_t pwm_counter = 0;
 
 	_mavlink_fd = ::open(MAVLINK_LOG_DEVICE, 0);
 
@@ -936,6 +942,7 @@ PX4IO::task_main()
 				_update_interval = 100;
 
 			orb_set_interval(_t_actuator_controls_0, _update_interval);
+			warnx("PXIO actuator controls polling interval set to %d ms\n",_update_interval);
 			/*
 			 * NOT changing the rate of groups 1-3 here, because only attitude
 			 * really needs to run fast.
@@ -963,6 +970,18 @@ PX4IO::task_main()
 			/* we're not nice to the lower-priority control groups and only check them
 			   when the primary group updated (which is now). */
 			(void)io_set_control_groups();
+			if (_vehicle_status.hil_state ==  vehicle_status_s::HIL_STATE_ON)
+			  {
+			    io_publish_pwm_outputs();
+			    
+			    pwm_counter++;
+			    if ( (now - print_last) >= 10000000 )
+			      {
+				warnx("pwm publishing freq : %lld Hz",pwm_counter/10);
+				pwm_counter = 0;
+				print_last = now;
+			      }
+			  }
 		}
 
 		if (now >= poll_last + IO_POLL_INTERVAL) {
@@ -976,7 +995,9 @@ PX4IO::task_main()
 			io_publish_raw_rc();
 
 			/* fetch PWM outputs from IO */
-			io_publish_pwm_outputs();
+			if(!(_vehicle_status.hil_state == vehicle_status_s::HIL_STATE_ON))
+			  io_publish_pwm_outputs();
+			
 		}
 
 		if (now >= orb_check_last + ORB_CHECK_INTERVAL) {
