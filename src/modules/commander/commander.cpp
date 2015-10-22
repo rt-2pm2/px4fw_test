@@ -477,6 +477,7 @@ bool handle_command(struct vehicle_status_s *status_local, const struct safety_s
 
 			/* set HIL state */
 			hil_state_t new_hil_state = (base_mode & MAV_MODE_FLAG_HIL_ENABLED) ? vehicle_status_s::HIL_STATE_ON : vehicle_status_s::HIL_STATE_OFF;
+                        warnx("HIL STATE SET %d \n",new_hil_state);
 			transition_result_t hil_ret = hil_state_transition(new_hil_state, status_pub, status_local, mavlink_fd);
 
 			// Transition the arming state

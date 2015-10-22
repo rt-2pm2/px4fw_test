@@ -449,7 +449,7 @@ void AttPosEKF::CovariancePrediction(float dt)
     dax_b = states[10];
     day_b = states[11];
     daz_b = states[12];
-    dvz_b =  states[13];
+    dvz_b = states[13];
     gyroProcessNoise = ConstrainFloat(gyroProcessNoise, 1e-3f, 5e-2f);
     daxCov = sq(dt*gyroProcessNoise);
     dayCov = sq(dt*gyroProcessNoise);

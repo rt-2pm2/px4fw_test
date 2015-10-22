@@ -107,9 +107,12 @@ extern device::Device *PX4IO_serial_interface() weak_function;
 #define PX4IO_REBOOT_BOOTLOADER		_IOC(0xff00, 2)
 #define PX4IO_CHECK_CRC			_IOC(0xff00, 3)
 
-#define UPDATE_INTERVAL_MIN		2			// 2 ms	-> 500 Hz
+#define UPDATE_INTERVAL_MIN		2	    	// 2 ms	-> 500 Hz
 #define ORB_CHECK_INTERVAL		200000		// 200 ms -> 5 Hz
 #define IO_POLL_INTERVAL		20000		// 20 ms -> 50 Hz
+
+#define  HIL_SIMULATION_FLAG            1
+
 
 /**
  * The PX4IO class.
@@ -884,10 +887,10 @@ void
 PX4IO::task_main()
 {
 	hrt_abstime poll_last = 0;
-	hrt_abstime print_last = 0;
+	//hrt_abstime print_last = 0;
 	hrt_abstime orb_check_last = 0;
 
-	uint64_t pwm_counter = 0;
+	//uint64_t pwm_counter = 0;
 
 	_mavlink_fd = ::open(MAVLINK_LOG_DEVICE, 0);
 
@@ -970,17 +973,16 @@ PX4IO::task_main()
 			/* we're not nice to the lower-priority control groups and only check them
 			   when the primary group updated (which is now). */
 			(void)io_set_control_groups();
-			if (_vehicle_status.hil_state ==  vehicle_status_s::HIL_STATE_ON)
+			if (HIL_SIMULATION_FLAG)
 			  {
 			    io_publish_pwm_outputs();
-			    
-			    pwm_counter++;
-			    if ( (now - print_last) >= 10000000 )
-			      {
-				warnx("pwm publishing freq : %lld Hz",pwm_counter/10);
-				pwm_counter = 0;
-				print_last = now;
-			      }
+			    //pwm_counter++;
+			    //if ( (now - print_last) >= 10000000 )
+			    //  {
+			    //	    warnx("pwm publishing freq : %lld Hz",pwm_counter/10);
+			    //	    pwm_counter = 0;
+			    //	    print_last = now;
+			    //  }
 			  }
 		}
 
@@ -995,7 +997,7 @@ PX4IO::task_main()
 			io_publish_raw_rc();
 
 			/* fetch PWM outputs from IO */
-			if(!(_vehicle_status.hil_state == vehicle_status_s::HIL_STATE_ON))
+			if(!HIL_SIMULATION_FLAG)
 			  io_publish_pwm_outputs();
 			
 		}
@@ -1782,6 +1784,7 @@ PX4IO::io_publish_raw_rc()
 int
 PX4IO::io_publish_pwm_outputs()
 {
+        
 	/* data we are going to fetch */
 	actuator_outputs_s outputs;
 	multirotor_motor_limits_s motor_limits;

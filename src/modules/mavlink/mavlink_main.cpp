@@ -741,7 +741,7 @@ Mavlink::set_hil_enabled(bool hil_enabled)
 	/* enable HIL */
 	if (hil_enabled && !_hil_enabled) {
 		_hil_enabled = true;
-		configure_stream("HIL_CONTROLS", 200.0f);
+		configure_stream("HIL_CONTROLS", 250.0f);
 	}
 
 	/* disable HIL */
@@ -1525,7 +1525,7 @@ Mavlink::task_main(int argc, char *argv[])
 	}
 
 	/* set main loop delay depending on data rate to minimize CPU overhead */
-	_main_loop_delay = (MAIN_LOOP_DELAY * 1000) / _datarate;
+	_main_loop_delay = (MAIN_LOOP_DELAY * 100) / _datarate;
 
 	/* now the instance is fully initialized and we can bump the instance count */
 	LL_APPEND(_mavlink_instances, this);
